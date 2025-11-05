@@ -169,8 +169,7 @@ int main(int, char **)
         ImGui::NewFrame();
 
         // My code goes here...
-        // myApp::renderUI();
-        ImGui::ShowDemoWindow();
+        myApp::renderUI();
 
         // Rendering
         ImGui::Render();
