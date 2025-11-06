@@ -13,18 +13,11 @@
 #include <sstream>
 #include <iomanip>
 
-// Platform-specific includes
-#ifdef _WIN32
-#define popen _popen
-#define pclose _pclose
-#include <windows.h>
-#include <signal.h>
-#else
+// Linux-specific includes
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <fcntl.h>
-#endif
 
 namespace myApp
 {
@@ -53,12 +46,7 @@ namespace myApp
     struct ProcessHandle
     {
         FILE *pipe = nullptr;
-#ifdef _WIN32
-        HANDLE process_handle = nullptr;
-        DWORD process_id = 0;
-#else
         pid_t pid = 0;
-#endif
     };
 
     static ProcessHandle g_process;
@@ -87,14 +75,6 @@ namespace myApp
     // Forcefully kill the running process
     static void kill_process()
     {
-#ifdef _WIN32
-        if (g_process.process_handle)
-        {
-            TerminateProcess(g_process.process_handle, 1);
-            CloseHandle(g_process.process_handle);
-            g_process.process_handle = nullptr;
-        }
-#else
         if (g_process.pid > 0)
         {
             // Kill the entire process group to catch child processes too
@@ -105,19 +85,11 @@ namespace myApp
             waitpid(g_process.pid, nullptr, WNOHANG);
             g_process.pid = 0;
         }
-#endif
     }
 
     static void run_command_thread(const std::string &command)
     {
-        std::string cmd_with_redirect = command + " 2>&1";
-
-#ifdef _WIN32
-        // Windows: use _popen
-        g_process.pipe = _popen(cmd_with_redirect.c_str(), "r");
-#else
-        // Unix/Linux: use popen with process group tracking
-        // We need to fork manually to track PID for proper killing
+        // Use pipe with process group tracking
         int pipefd[2];
         if (pipe(pipefd) == -1)
         {
@@ -160,7 +132,6 @@ namespace myApp
         g_process.pid = pid;
         close(pipefd[1]); // Close write end
         g_process.pipe = fdopen(pipefd[0], "r");
-#endif
 
         if (!g_process.pipe)
         {
@@ -172,11 +143,9 @@ namespace myApp
         }
 
         // Set non-blocking mode for better responsiveness
-#ifndef _WIN32
         int fd = fileno(g_process.pipe);
         int flags = fcntl(fd, F_GETFL, 0);
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
 
         constexpr size_t BUF_SIZE = 1024;
         char buffer[BUF_SIZE];
@@ -209,9 +178,6 @@ namespace myApp
             exit_code = -1;
         }
 
-#ifdef _WIN32
-        exit_code = _pclose(g_process.pipe);
-#else
         if (g_process.pipe)
         {
             fclose(g_process.pipe);
@@ -225,7 +191,6 @@ namespace myApp
                     exit_code = -1;
             }
         }
-#endif
 
         g_process.pipe = nullptr;
         g_process.pid = 0;
@@ -261,6 +226,7 @@ namespace myApp
     }
 
     // Start a command in background
+    // Start a command in background
     static void start_command(const std::string &cmd, bool show_timestamp)
     {
         // Stop existing command if running
@@ -270,6 +236,12 @@ namespace myApp
             if (g_worker.joinable())
                 g_worker.join();
             g_stop_requested = false;
+        }
+
+        // **FIX: Always join the previous thread if it's joinable**
+        if (g_worker.joinable())
+        {
+            g_worker.join();
         }
 
         {
@@ -334,8 +306,20 @@ namespace myApp
         static bool show_timestamps = false;
         static float output_height = 400.0f;
 
-        ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Command Runner", nullptr, ImGuiWindowFlags_MenuBar);
+        ImGuiViewport *viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
+        ImGui::SetNextWindowViewport(viewport->ID);
+
+        ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar |
+                                        ImGuiWindowFlags_NoTitleBar |
+                                        ImGuiWindowFlags_NoCollapse |
+                                        ImGuiWindowFlags_NoResize |
+                                        ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                        ImGuiWindowFlags_NoNavFocus;
+
+        ImGui::Begin("Command Runner", nullptr, window_flags);
 
         // Menu bar
         if (ImGui::BeginMenuBar())
@@ -364,10 +348,8 @@ namespace myApp
                     strcpy(command_buf, "ps aux | head -20");
                 if (ImGui::MenuItem("Ping test"))
                     strcpy(command_buf, "ping -c 5 8.8.8.8");
-#ifndef _WIN32
                 if (ImGui::MenuItem("Update packages (sudo apt update)"))
                     strcpy(command_buf, "sudo apt update");
-#endif
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -386,7 +368,6 @@ namespace myApp
         // Command history navigation with Up/Down arrows
         if (ImGui::IsItemFocused() && !g_command_history.empty())
         {
-            // Use ImGuiKey_ directly (newer ImGui API)
             if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
             {
                 if (g_history_index < (int)g_command_history.size() - 1)
