@@ -40,5 +40,8 @@
 # debug information files
 *.dwo
 
-# executables
-examples/example_glfw_opengl3
+imgui.ini
+
+.vscode/
+bin/
+build/
